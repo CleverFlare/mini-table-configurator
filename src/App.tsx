@@ -28,15 +28,27 @@ import { firstFrameRendered, shadersProgress } from "@/lib/load-stages";
 import {
   DEFAULT_CONFIGURATION,
   SLOTS,
+  findFinish,
+  isGlass,
   type Configuration,
   type Slot,
 } from "@/lib/table-variants";
 
-type VariantTag = { slot?: Slot; variant?: string };
+type VariantTag = { slot?: Slot; variant?: string; glass?: boolean };
+
+// Whether each slot's chosen finish is glass.
+function glassSlots({ finishes }: Configuration) {
+  return Object.fromEntries(
+    SLOTS.map(({ slot }) => {
+      const finish = findFinish(slot, finishes[slot]);
+      return [slot, !!finish && isGlass(finish)];
+    }),
+  ) as Record<Slot, boolean>;
+}
 
 // Every variant is in the scene; swapping one only flips which is visible.
 // Each slot's variants share one material, so a finish is applied once to
-// that material.
+// that material; glass shows each variant's glass twin instead.
 function Table({ configuration }: { configuration: Configuration }) {
   const { variants, finishes } = configuration;
   const scene = use(tableModel);
@@ -57,12 +69,16 @@ function Table({ configuration }: { configuration: Configuration }) {
   // Before paint, so the first frame, the shader compile and the shadow bake
   // see the right variants.
   useLayoutEffect(() => {
+    const glass = glassSlots({ variants, finishes });
     scene.traverse((object) => {
-      const { slot, variant } = object.userData as VariantTag;
-      if (slot && variant) object.visible = variants[slot] === variant;
+      const tag = object.userData as VariantTag;
+      if (!tag.slot || !tag.variant) return;
+      object.visible =
+        variants[tag.slot] === tag.variant &&
+        (tag.glass === undefined || tag.glass === glass[tag.slot]);
     });
     invalidate();
-  }, [scene, variants, invalidate]);
+  }, [scene, variants, finishes, invalidate]);
 
   // The renderer reads these values from the material every frame, so a
   // finish change is a uniform update, never a shader recompile.
@@ -70,7 +86,8 @@ function Table({ configuration }: { configuration: Configuration }) {
     for (const { slot, material, finishes: options } of SLOTS) {
       const target = materials.get(material);
       const finish = options.find(({ id }) => id === finishes[slot]);
-      if (!target || !finish) continue;
+      // Glass has its own material, set up with the model.
+      if (!target || !finish || isGlass(finish)) continue;
       target.color.set(finish.color);
       target.roughness = finish.roughness;
       target.metalness = finish.metalness;
@@ -152,6 +169,12 @@ function FitCamera() {
 
 function App() {
   const [configuration, setConfiguration] = useState(DEFAULT_CONFIGURATION);
+  // The shadow follows the shapes and whether a part is glass, which casts a
+  // lighter one; other finish changes leave it as it is.
+  const shadowKey = JSON.stringify([
+    configuration.variants,
+    glassSlots(configuration),
+  ]);
   // Height of the mobile sheet, kept clear below the viewport.
   const [sheetPeek, setSheetPeek] = useState(0);
 
@@ -202,8 +225,7 @@ function App() {
             gl.toneMappingExposure = 1.2;
           }}
         >
-          {/* Finishes don't change the shadow, so only variants re-bake it. */}
-          <Studio shadowKey={configuration.variants}>
+          <Studio shadowKey={shadowKey}>
             <Table configuration={configuration} />
             <ReportSceneReady />
           </Studio>

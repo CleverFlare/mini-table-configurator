@@ -17,6 +17,8 @@ export const SLOTS = [
       { id: "oak", label: "Oak", color: "#c8a27a", roughness: 0.55, metalness: 0 },
       { id: "walnut", label: "Walnut", color: "#5a3a26", roughness: 0.45, metalness: 0 },
       { id: "marble", label: "White marble", color: "#ededea", roughness: 0.2, metalness: 0 },
+      // Light passes through; see `isGlass`.
+      { id: "glass", label: "Glass", color: "#f4f8f7", roughness: 0.05, metalness: 0, transmission: 1 },
     ],
   },
   {
@@ -41,9 +43,19 @@ export type Slot = (typeof SLOTS)[number]["slot"];
 
 export type Finish = (typeof SLOTS)[number]["finishes"][number];
 
-// The chosen variant and finish ids for each slot. Kept apart, so a finish
-// change leaves `variants` as it was and the shape-dependent work, like the
-// shadow bake, can key on it alone.
+// Glass needs a transmissive material of its own; the other finishes only
+// change the values of the slot's shared material.
+export function isGlass(finish: Finish) {
+  return "transmission" in finish;
+}
+
+export function findFinish(slot: Slot, id: string) {
+  return SLOTS.find((entry) => entry.slot === slot)!.finishes.find(
+    (finish: Finish) => finish.id === id,
+  );
+}
+
+// The chosen variant and finish ids for each slot.
 export type Configuration = {
   variants: Record<Slot, string>;
   finishes: Record<Slot, string>;

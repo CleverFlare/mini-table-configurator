@@ -21,10 +21,12 @@ import {
   positionWorld,
   saturate,
   texture,
+  uniform,
   uv,
   vec2,
   vec4,
 } from "three/tsl";
+import { backdropColor } from "@/lib/backdrop";
 
 // Side of the floor square the shadow covers, in meters, centered under the
 // model: the widest top with room for the blur.
@@ -39,6 +41,9 @@ const LAYERS = [
   { height: 1.2, blur: 0.1, resolution: 128, strength: 0.45 },
   { height: 0.15, blur: 0.008, resolution: 1024, strength: 0.9 },
 ];
+
+// The opacity of the casters being drawn into a bake, set per pass.
+const shadowOpacity = uniform(1);
 
 // 9 taps, two steps per sigma. Each bake blurs twice, so the taps' copies of
 // the hard-edged source merge into a smooth falloff; two passes of sigma make
@@ -95,7 +100,7 @@ function createLayer({
     0,
     0,
     0,
-    saturate(positionWorld.y.div(height).oneMinus()),
+    saturate(positionWorld.y.div(height).oneMinus()).mul(shadowOpacity),
   );
 
   const sigma = blur / SIZE / Math.SQRT2;
@@ -107,6 +112,19 @@ function createLayer({
 
 type Layer = ReturnType<typeof createLayer>;
 
+// The visible meshes other than the floor, grouped by how dark a shadow
+// each casts: `userData.shadowOpacity`, 1 unless set.
+function shadowCasters(scene: Scene, floor: Mesh) {
+  const groups = new Map<number, Mesh[]>();
+  scene.traverseVisible((object) => {
+    const mesh = object as Mesh;
+    if (!mesh.isMesh || mesh === floor) return;
+    const opacity = (mesh.userData.shadowOpacity as number | undefined) ?? 1;
+    groups.set(opacity, [...(groups.get(opacity) ?? []), mesh]);
+  });
+  return groups;
+}
+
 function bake(
   renderer: WebGPURenderer,
   scene: Scene,
@@ -117,14 +135,32 @@ function bake(
   const previousOverride = scene.overrideMaterial;
   const previousClearColor = renderer.getClearColor(new Color());
   const previousClearAlpha = renderer.getClearAlpha();
+  const previousAutoClear = renderer.autoClear;
+  const previousBackground = scene.backgroundNode;
+  const groups = shadowCasters(scene, floor);
 
+  // Only the casters belong in the bake.
+  scene.backgroundNode = null;
   floor.visible = false;
   renderer.setClearColor(0x000000, 0);
   for (const layer of layers) {
-    scene.overrideMaterial = layer.material;
     renderer.setRenderTarget(layer.target);
-    renderer.render(scene, layer.camera);
+    renderer.clear();
+    renderer.autoClear = false;
+    scene.overrideMaterial = layer.material;
+    // One pass per opacity, each showing only its own meshes.
+    for (const [opacity, meshes] of groups) {
+      for (const group of groups.values()) {
+        for (const mesh of group) mesh.visible = group === meshes;
+      }
+      shadowOpacity.value = opacity;
+      renderer.render(scene, layer.camera);
+    }
+    for (const group of groups.values()) {
+      for (const mesh of group) mesh.visible = true;
+    }
     scene.overrideMaterial = previousOverride;
+    renderer.autoClear = previousAutoClear;
 
     for (let i = 0; i < BLUR_ITERATIONS; i++) {
       renderer.setRenderTarget(layer.scratch);
@@ -136,11 +172,12 @@ function bake(
 
   renderer.setRenderTarget(previousTarget);
   renderer.setClearColor(previousClearColor, previousClearAlpha);
+  scene.backgroundNode = previousBackground;
   floor.visible = true;
 }
 
 // A soft contact shadow on the floor at y = 0, from everything else in the
-// scene. Baked into textures when it mounts and whenever `bakeKey` changes,
+// scene, drawn into the page's backdrop (see `backdropColor`); a mesh's `userData.shadowOpacity` (0 to 1) lightens its share. Baked into textures when it mounts and whenever `bakeKey` changes,
 // rather than every frame; mount it once the model is in the scene.
 export function ContactShadow({ bakeKey }: { bakeKey: unknown }) {
   const gl = useThree((state) => state.gl) as unknown as WebGPURenderer;
@@ -163,16 +200,16 @@ export function ContactShadow({ bakeKey }: { bakeKey: unknown }) {
   );
 
   // Both bakes, darkening the floor together: the layers' shadows combine
-  // like two dark films, never past black.
+  // like two dark films, never past black. The floor is opaque, drawing the
+  // page's backdrop dimmed by them: blended over the backdrop instead, a
+  // shadow would barely dim the near-white center, which takes far brighter
+  // values than white once the tone mapping is undone.
   const floorMaterial = useMemo(() => {
-    const material = new MeshBasicNodeMaterial({
-      transparent: true,
-      depthWrite: false,
-    });
+    const material = new MeshBasicNodeMaterial();
     const light = LAYERS.map(({ strength }, index) =>
       texture(layers[index].target.texture).a.mul(strength).oneMinus(),
     ).reduce((lit, layer) => lit.mul(layer));
-    material.fragmentNode = vec4(0, 0, 0, light.oneMinus());
+    material.fragmentNode = vec4(backdropColor(light.oneMinus()), 1);
     return material;
   }, [layers]);
   useLayoutEffect(() => () => floorMaterial.dispose(), [floorMaterial]);

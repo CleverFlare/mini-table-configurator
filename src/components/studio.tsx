@@ -1,4 +1,4 @@
-import { Suspense, useEffect, type ReactNode } from "react";
+import { Suspense, useEffect, useMemo, type ReactNode } from "react";
 import { useThree } from "@react-three/fiber";
 import {
   DoubleSide,
@@ -10,6 +10,7 @@ import {
 } from "three";
 import { PMREMGenerator, type WebGPURenderer } from "three/webgpu";
 import { ContactShadow } from "@/components/contact-shadow";
+import { backdropColor, backdropUniforms } from "@/lib/backdrop";
 
 // Softbox panels as [position, [width, height], intensity], each facing the
 // origin: a large overhead key, a softer front fill, rim lights for edge
@@ -22,6 +23,9 @@ const SOFTBOXES: [Vector3Tuple, [number, number], number][] = [
   [[0, 1, -6], [8, 4], 1.2],
   [[0, -4, 0], [8, 8], 0.6],
 ];
+
+// Radians; enough to soften the panels' edges, not their shape.
+const ENVIRONMENT_BLUR = 0.03;
 
 // Prefilters the softbox scene into the environment map. drei's Environment
 // renders into a WebGL-only cube target, which WebGPURenderer ignores.
@@ -47,7 +51,9 @@ function StudioEnvironment() {
     }
 
     const pmrem = new PMREMGenerator(gl);
-    const target = pmrem.fromScene(softboxes);
+    // A slight blur: the panels' hard edges render aliased into the cube's
+    // faces, which glass, smooth enough to mirror them, shows as stair steps.
+    const target = pmrem.fromScene(softboxes, ENVIRONMENT_BLUR);
     scene.environment = target.texture;
     // Frames render on demand, so ask for one with the new lighting.
     invalidate();
@@ -62,6 +68,36 @@ function StudioEnvironment() {
       });
     };
   }, [gl, scene, invalidate]);
+
+  return null;
+}
+
+// Draws the page's backdrop behind the model, so glass has something to
+// refract: transmission samples what's already drawn, and a transparent
+// canvas leaves it nothing but empty pixels.
+function StudioBackdrop() {
+  const gl = useThree((state) => state.gl);
+  const scene = useThree((state) => state.scene);
+  const size = useThree((state) => state.size);
+  const invalidate = useThree((state) => state.invalidate);
+  const node = useMemo(() => backdropColor(), []);
+
+  useEffect(() => {
+    const { canvasSize, pageSize, exposure } = backdropUniforms;
+    exposure.value = gl.toneMappingExposure;
+    canvasSize.value.set(size.width, size.height);
+    // The app fills the viewport.
+    pageSize.value.set(window.innerWidth, window.innerHeight);
+    invalidate();
+  }, [gl, size, invalidate]);
+
+  useEffect(() => {
+    scene.backgroundNode = node;
+    invalidate();
+    return () => {
+      scene.backgroundNode = null;
+    };
+  }, [scene, node, invalidate]);
 
   return null;
 }
@@ -83,6 +119,7 @@ export function Studio({
       <hemisphereLight args={["#ffffff", "#d8d8d8", 0.6]} />
       <directionalLight position={[2, 5, 4]} intensity={1.5} />
       <StudioEnvironment />
+      <StudioBackdrop />
       <Suspense fallback={null}>
         {children}
         {/* Inside the boundary, so it bakes once the model is in. */}
