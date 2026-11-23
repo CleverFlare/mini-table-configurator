@@ -18,13 +18,19 @@ import {
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { VariantIcon } from "@/components/variant-icon";
 import { useMediaQuery } from "@/hooks/use-media-query";
-import { SLOTS, type Configuration, type Slot } from "@/lib/table-variants";
+import {
+  SLOTS,
+  type Configuration,
+  type Finish,
+  type Slot,
+} from "@/lib/table-variants";
 
-const DESCRIPTION = "Choose a top and legs.";
+const DESCRIPTION = "Choose the shape and finish of the top and legs.";
 
 type PanelProps = {
   configuration: Configuration;
   onVariantChange: (slot: Slot, variant: string) => void;
+  onFinishChange: (slot: Slot, finish: string) => void;
   onReset: () => void;
 };
 
@@ -122,43 +128,93 @@ function MobileSheet({
   );
 }
 
-// A picker per slot, shared by both layouts.
+// A variant picker and a finish picker per slot, shared by both layouts.
 function PanelControls({
   configuration,
   onVariantChange,
+  onFinishChange,
 }: Omit<PanelProps, "onReset">) {
-  return SLOTS.map(({ slot, label, variants }) => {
-    const selected = variants.find(({ id }) => id === configuration[slot]);
+  return SLOTS.map(({ slot, label, variants, finishes }) => {
+    const variant = variants.find(
+      ({ id }) => id === configuration.variants[slot],
+    );
+    const finish = finishes.find(
+      ({ id }) => id === configuration.finishes[slot],
+    );
     return (
       <div key={slot} className="flex flex-col gap-3">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-2">
           <p className="font-medium">{label}</p>
-          <p className="text-muted-foreground">{selected?.label}</p>
+          <p className="truncate text-muted-foreground">
+            {variant?.label} · {finish?.label}
+          </p>
         </div>
         <ToggleGroup
-          aria-label={label}
+          aria-label={`${label} shape`}
           variant="outline"
-          value={[configuration[slot]]}
+          value={[configuration.variants[slot]]}
           onValueChange={(value) => {
             // Single choice: ignore the toggle-off of the current variant.
             if (value[0]) onVariantChange(slot, value[0] as string);
           }}
           className="grid w-full grid-cols-4"
         >
-          {variants.map((variant) => (
+          {variants.map((option) => (
             <ToggleGroupItem
-              key={variant.id}
-              value={variant.id}
-              aria-label={variant.label}
-              title={variant.label}
+              key={option.id}
+              value={option.id}
+              aria-label={option.label}
+              title={option.label}
               className="h-auto flex-col gap-1.5 px-1 py-2.5 text-xs"
             >
-              <VariantIcon slot={slot} variant={variant.id} className="size-10" />
-              <span className="truncate">{variant.label}</span>
+              <VariantIcon slot={slot} variant={option.id} className="size-10" />
+              <span className="truncate">{option.label}</span>
+            </ToggleGroupItem>
+          ))}
+        </ToggleGroup>
+        <ToggleGroup
+          aria-label={`${label} finish`}
+          variant="outline"
+          size="sm"
+          value={[configuration.finishes[slot]]}
+          onValueChange={(value) => {
+            if (value[0]) onFinishChange(slot, value[0] as string);
+          }}
+          // Sized to their labels, which vary more than the shapes' do.
+          className="flex w-full flex-wrap"
+        >
+          {finishes.map((option) => (
+            <ToggleGroupItem
+              key={option.id}
+              value={option.id}
+              aria-label={option.label}
+              title={option.label}
+              className="gap-2 px-2.5 text-xs"
+            >
+              <FinishSwatch finish={option} />
+              {option.label}
             </ToggleGroupItem>
           ))}
         </ToggleGroup>
       </div>
     );
   });
+}
+
+// The finish's color as a chip; metals get a diagonal highlight, so they read
+// as polished rather than painted.
+function FinishSwatch({ finish }: { finish: Finish }) {
+  return (
+    <span
+      aria-hidden
+      className="size-4 shrink-0 rounded-full shadow-[inset_0_0_0_1px_rgb(0_0_0/0.15)]"
+      style={{
+        backgroundColor: finish.color,
+        backgroundImage:
+          finish.metalness > 0
+            ? "linear-gradient(135deg, rgb(255 255 255 / 0.65), transparent 45%, rgb(0 0 0 / 0.25))"
+            : undefined,
+      }}
+    />
+  );
 }

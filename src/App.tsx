@@ -2,6 +2,7 @@ import {
   use,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useState,
   type CSSProperties,
 } from "react";
@@ -10,6 +11,8 @@ import {
   MathUtils,
   NeutralToneMapping,
   Vector3,
+  type Mesh,
+  type MeshStandardMaterial,
   type Object3D,
   type PerspectiveCamera,
 } from "three";
@@ -24,6 +27,7 @@ import { tableModel } from "@/lib/table-assets";
 import { firstFrameRendered, shadersProgress } from "@/lib/load-stages";
 import {
   DEFAULT_CONFIGURATION,
+  SLOTS,
   type Configuration,
   type Slot,
 } from "@/lib/table-variants";
@@ -31,19 +35,48 @@ import {
 type VariantTag = { slot?: Slot; variant?: string };
 
 // Every variant is in the scene; swapping one only flips which is visible.
+// Each slot's variants share one material, so a finish is applied once to
+// that material.
 function Table({ configuration }: { configuration: Configuration }) {
+  const { variants, finishes } = configuration;
   const scene = use(tableModel);
   const invalidate = useThree((state) => state.invalidate);
+
+  // The model's materials by name.
+  const materials = useMemo(() => {
+    const byName = new Map<string, MeshStandardMaterial>();
+    scene.traverse((object) => {
+      const material = (object as Mesh).material as
+        | MeshStandardMaterial
+        | undefined;
+      if (material?.name) byName.set(material.name, material);
+    });
+    return byName;
+  }, [scene]);
 
   // Before paint, so the first frame, the shader compile and the shadow bake
   // see the right variants.
   useLayoutEffect(() => {
     scene.traverse((object) => {
       const { slot, variant } = object.userData as VariantTag;
-      if (slot && variant) object.visible = configuration[slot] === variant;
+      if (slot && variant) object.visible = variants[slot] === variant;
     });
     invalidate();
-  }, [scene, configuration, invalidate]);
+  }, [scene, variants, invalidate]);
+
+  // The renderer reads these values from the material every frame, so a
+  // finish change is a uniform update, never a shader recompile.
+  useLayoutEffect(() => {
+    for (const { slot, material, finishes: options } of SLOTS) {
+      const target = materials.get(material);
+      const finish = options.find(({ id }) => id === finishes[slot]);
+      if (!target || !finish) continue;
+      target.color.set(finish.color);
+      target.roughness = finish.roughness;
+      target.metalness = finish.metalness;
+    }
+    invalidate();
+  }, [materials, finishes, invalidate]);
 
   return <primitive object={scene} />;
 }
@@ -169,7 +202,8 @@ function App() {
             gl.toneMappingExposure = 1.2;
           }}
         >
-          <Studio shadowKey={configuration}>
+          {/* Finishes don't change the shadow, so only variants re-bake it. */}
+          <Studio shadowKey={configuration.variants}>
             <Table configuration={configuration} />
             <ReportSceneReady />
           </Studio>
@@ -187,7 +221,16 @@ function App() {
       <ConfiguratorPanel
         configuration={configuration}
         onVariantChange={(slot, variant) =>
-          setConfiguration((current) => ({ ...current, [slot]: variant }))
+          setConfiguration((current) => ({
+            ...current,
+            variants: { ...current.variants, [slot]: variant },
+          }))
+        }
+        onFinishChange={(slot, finish) =>
+          setConfiguration((current) => ({
+            ...current,
+            finishes: { ...current.finishes, [slot]: finish },
+          }))
         }
         onReset={() => setConfiguration(DEFAULT_CONFIGURATION)}
         onPeekChange={setSheetPeek}
