@@ -1,11 +1,17 @@
-import { use, useEffect, useMemo, useState, type CSSProperties } from "react";
+import {
+  use,
+  useEffect,
+  useLayoutEffect,
+  useState,
+  type CSSProperties,
+} from "react";
 import { addAfterEffect, Canvas, useThree } from "@react-three/fiber";
 import {
   MathUtils,
   NeutralToneMapping,
+  Vector3,
+  type Object3D,
   type PerspectiveCamera,
-  type Mesh,
-  type MeshPhysicalMaterial,
 } from "three";
 import { WebGPURenderer } from "three/webgpu";
 import { OrbitControls } from "@react-three/drei";
@@ -14,83 +20,38 @@ import { Studio } from "@/components/studio";
 import { ConfiguratorPanel } from "@/components/configurator-panel";
 import { InstallPrompt } from "@/components/install-prompt";
 import { LoadingOverlay } from "@/components/loading-overlay";
-import {
-  setSweaterRenderer,
-  sweaterMask,
-  sweaterModel,
-} from "@/lib/sweater-assets";
+import { tableModel } from "@/lib/table-assets";
 import { firstFrameRendered, shadersProgress } from "@/lib/load-stages";
-import type { Zone } from "@/lib/parts";
 import {
-  createSweaterMaterial,
-  createZipperPullMaterial,
-  type ZoneColors,
-} from "@/materials/sweater-material";
+  DEFAULT_CONFIGURATION,
+  type Configuration,
+  type Slot,
+} from "@/lib/table-variants";
 
-// How much unlit areas are brightened. The lift is stronger for darker colors,
-// so dark fabric doesn't crush to black on the side facing away from the
-// lights, while light colors stay close to physically lit.
-const SHADOW_LIFT = 0.35;
+type VariantTag = { slot?: Slot; variant?: string };
 
-const DEFAULT_COLORS: ZoneColors = {
-  body: "#323232",
-  sleeves: "#838383",
-  hood: "#919191",
-  trim: "#000000",
-};
-
-function Sweater({ colors }: { colors: ZoneColors }) {
-  const { nodes, materials } = use(sweaterModel);
-  const mask = use(sweaterMask);
+// Every variant is in the scene; swapping one only flips which is visible.
+function Table({ configuration }: { configuration: Configuration }) {
+  const scene = use(tableModel);
   const invalidate = useThree((state) => state.invalidate);
 
-  // Built once with the defaults; color changes only update its uniforms.
-  const { material, zoneColors } = useMemo(
-    () =>
-      createSweaterMaterial(
-        materials.Sweater as MeshPhysicalMaterial,
-        mask,
-        DEFAULT_COLORS,
-        SHADOW_LIFT,
-      ),
-    [materials, mask],
-  );
-  useEffect(() => {
-    for (const zone of Object.keys(zoneColors) as Zone[]) {
-      zoneColors[zone].value.set(colors[zone]);
-    }
-    // Uniforms change outside React's props, so request the frame.
+  // Before paint, so the first frame and the shader compile see the right
+  // variants.
+  useLayoutEffect(() => {
+    scene.traverse((object) => {
+      const { slot, variant } = object.userData as VariantTag;
+      if (slot && variant) object.visible = configuration[slot] === variant;
+    });
     invalidate();
-  }, [zoneColors, colors, invalidate]);
-  const zipperPullMaterial = useMemo(
-    () =>
-      createZipperPullMaterial(materials.ZipperPull as MeshPhysicalMaterial),
-    [materials],
-  );
-  const zipperPull = nodes.ZipperPull as Mesh;
+  }, [scene, configuration, invalidate]);
 
-  return (
-    <group>
-      <mesh
-        geometry={(nodes.Sweater as Mesh).geometry}
-        material={material}
-        castShadow
-      />
-      <mesh
-        geometry={zipperPull.geometry}
-        material={zipperPullMaterial}
-        position={zipperPull.position}
-        quaternion={zipperPull.quaternion}
-        scale={zipperPull.scale}
-        castShadow
-      />
-    </group>
-  );
+  return <primitive object={scene} />;
 }
 
 // Mounted beside the model, so it runs once the model is in the scene:
-// compiles every shader up front, reporting progress, then marks the first
-// frame drawn after that, when the model is actually on screen.
+// compiles every shader up front, hidden variants included so swapping one in
+// never stalls, reporting progress, then marks the first frame drawn after
+// that, when the model is actually on screen.
 function ReportSceneReady() {
   const gl = useThree((state) => state.gl) as unknown as WebGPURenderer;
   const scene = useThree((state) => state.scene);
@@ -100,18 +61,25 @@ function ReportSceneReady() {
   useEffect(() => {
     let cancelled = false;
     let removeAfterEffect: (() => void) | undefined;
-    void gl
-      .compileAsync(scene, camera, null, (event) =>
-        shadersProgress(event.loaded, event.total),
-      )
-      .then(() => {
-        if (cancelled) return;
-        removeAfterEffect = addAfterEffect(() => {
-          firstFrameRendered();
-          removeAfterEffect?.();
-        });
-        invalidate();
+    // The compile collects the visible objects synchronously, so the hidden
+    // ones only need showing for the call itself.
+    const hidden: Object3D[] = [];
+    scene.traverse((object) => {
+      if (!object.visible) hidden.push(object);
+    });
+    for (const object of hidden) object.visible = true;
+    const compiled = gl.compileAsync(scene, camera, null, (event) =>
+      shadersProgress(event.loaded, event.total),
+    );
+    for (const object of hidden) object.visible = false;
+    void compiled.then(() => {
+      if (cancelled) return;
+      removeAfterEffect = addAfterEffect(() => {
+        firstFrameRendered();
+        removeAfterEffect?.();
       });
+      invalidate();
+    });
     return () => {
       cancelled = true;
       removeAfterEffect?.();
@@ -121,11 +89,17 @@ function ReportSceneReady() {
   return null;
 }
 
-// The garment is wide (arms out), so on a portrait view the camera's distance
-// is set by width rather than height. Keeps the orbit direction.
-const CAMERA_DISTANCE = 4.5;
-const GARMENT_HALF_WIDTH = 1.75;
+// The orbit centers on the table's middle, about halfway up its 72 cm height,
+// and starts from the front, slightly to the right and above.
+const CAMERA_TARGET = new Vector3(0, 0.38, 0);
+const CAMERA_START = new Vector3(1.1, 1.25, 2.4);
+const CAMERA_DISTANCE = CAMERA_START.distanceTo(CAMERA_TARGET);
+// Reach of the widest top from the center, with a margin. The table is wider
+// than it is tall, so on a portrait view the camera's distance is set by width
+// rather than height.
+const TABLE_HALF_WIDTH = 1;
 
+// Keeps the orbit direction, only moving the camera along it.
 function FitCamera() {
   const camera = useThree((state) => state.camera) as PerspectiveCamera;
   const aspect = useThree((state) => state.size.width / state.size.height);
@@ -133,8 +107,10 @@ function FitCamera() {
 
   useEffect(() => {
     const halfFov = MathUtils.degToRad(camera.fov / 2);
-    const widthDistance = GARMENT_HALF_WIDTH / (Math.tan(halfFov) * aspect);
-    camera.position.setLength(Math.max(CAMERA_DISTANCE, widthDistance));
+    const widthDistance = TABLE_HALF_WIDTH / (Math.tan(halfFov) * aspect);
+    const offset = camera.position.clone().sub(CAMERA_TARGET);
+    offset.setLength(Math.max(CAMERA_DISTANCE, widthDistance));
+    camera.position.copy(CAMERA_TARGET).add(offset);
     invalidate();
   }, [camera, aspect, invalidate]);
 
@@ -142,9 +118,8 @@ function FitCamera() {
 }
 
 function App() {
-  const [colors, setColors] = useState(DEFAULT_COLORS);
-  const [selectedZone, setSelectedZone] = useState<Zone>("body");
-  // Collapsed height of the mobile sheet, kept clear below the viewport.
+  const [configuration, setConfiguration] = useState(DEFAULT_CONFIGURATION);
+  // Height of the mobile sheet, kept clear below the viewport.
   const [sheetPeek, setSheetPeek] = useState(0);
 
   return (
@@ -172,8 +147,8 @@ function App() {
           <InstallPrompt />
         </div>
         <Canvas
-          camera={{ position: [0, 0.3, CAMERA_DISTANCE], fov: 45 }}
-          // The scene only changes on orbit, color or resize, so frames render
+          camera={{ position: CAMERA_START.toArray(), fov: 45 }}
+          // The scene only changes on orbit, swap or resize, so frames render
           // on demand rather than 60 times a second.
           frameloop="demand"
           // Variance shadow maps, so the floor shadow can be blurred.
@@ -184,7 +159,6 @@ function App() {
               props as ConstructorParameters<typeof WebGPURenderer>[0],
             );
             await renderer.init();
-            setSweaterRenderer(renderer);
             return renderer;
           }}
           // Set after creation, since R3F applies its own tone mapping default
@@ -194,22 +168,27 @@ function App() {
             gl.toneMappingExposure = 1.2;
           }}
         >
-          <Studio>
-            <Sweater colors={colors} />
+          <Studio shadowKey={configuration}>
+            <Table configuration={configuration} />
             <ReportSceneReady />
           </Studio>
-          <OrbitControls makeDefault target={[0, 0, 0]} />
+          <OrbitControls
+            makeDefault
+            target={CAMERA_TARGET.toArray()}
+            // Stops just above the floor, which only exists as a shadow.
+            maxPolarAngle={MathUtils.degToRad(85)}
+            minDistance={1.2}
+            maxDistance={6}
+          />
           <FitCamera />
         </Canvas>
       </main>
       <ConfiguratorPanel
-        colors={colors}
-        selected={selectedZone}
-        onSelect={setSelectedZone}
-        onColorChange={(zone, color) =>
-          setColors((current) => ({ ...current, [zone]: color }))
+        configuration={configuration}
+        onVariantChange={(slot, variant) =>
+          setConfiguration((current) => ({ ...current, [slot]: variant }))
         }
-        onReset={() => setColors(DEFAULT_COLORS)}
+        onReset={() => setConfiguration(DEFAULT_CONFIGURATION)}
         onPeekChange={setSheetPeek}
       />
       <LoadingOverlay />

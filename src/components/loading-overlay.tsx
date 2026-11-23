@@ -23,9 +23,8 @@ const FADE_MS = 300;
 // first visit, not measurements; the bar fills to 100% only when the first
 // frame is on screen.
 const STAGE_WEIGHTS = {
-  download: 0.7,
-  textures: 0.15,
-  shaders: 0.12,
+  download: 0.75,
+  shaders: 0.22,
   firstFrame: 0.03,
 };
 
@@ -33,8 +32,8 @@ function fraction({ done, total }: Steps) {
   return total > 0 ? Math.min(done / total, 1) : 0;
 }
 
-function isComplete(steps: Steps & { pending?: number }) {
-  return !steps.pending && steps.total > 0 && steps.done >= steps.total;
+function isComplete(steps: Steps) {
+  return steps.total > 0 && steps.done >= steps.total;
 }
 
 function megabytes(bytes: number) {
@@ -42,8 +41,8 @@ function megabytes(bytes: number) {
 }
 
 // Covers the app until the model is on screen: while the tracked assets
-// download, their textures decode, the shaders compile and the first frame
-// renders. One bar spans all four stages, and the line below names the
+// download, the shaders compile and the first frame renders. One bar spans
+// all three stages, and the line below names the
 // current one. Fades out once the first frame is drawn.
 export function LoadingOverlay() {
   const assets = useSyncExternalStore(subscribeToAssets, getAssetProgress);
@@ -70,9 +69,6 @@ export function LoadingOverlay() {
   const total = assets.reduce((sum, asset) => sum + asset.total, 0);
   const progress =
     STAGE_WEIGHTS.download * fraction({ done: loaded, total }) +
-    // Counted only once every total is known, so the bar never moves back.
-    STAGE_WEIGHTS.textures *
-      (stages.textures.pending > 0 ? 0 : fraction(stages.textures)) +
     STAGE_WEIGHTS.shaders * fraction(stages.shaders) +
     STAGE_WEIGHTS.firstFrame * (stages.firstFrame ? 1 : 0);
   const failed = assets.find((asset) => asset.status === "error");
@@ -84,27 +80,19 @@ export function LoadingOverlay() {
         !largest || asset.total > largest.total ? asset : largest,
       undefined,
     );
-  // The current stage and its count. Small downloads can finish while
-  // textures already decode, so downloads take precedence.
+  // The current stage and its count.
   const [label, detail] = current
     ? [
         current.name,
         `${megabytes(current.loaded)} / ${megabytes(current.total)} MB`,
       ]
-    : !isComplete(stages.textures)
+    : !isComplete(stages.shaders)
       ? [
-          "Decoding textures",
-          stages.textures.pending === 0 &&
-            stages.textures.total > 0 &&
-            `${stages.textures.done} / ${stages.textures.total}`,
+          "Preparing shaders",
+          stages.shaders.total > 0 &&
+            `${stages.shaders.done} / ${stages.shaders.total}`,
         ]
-      : !isComplete(stages.shaders)
-        ? [
-            "Preparing shaders",
-            stages.shaders.total > 0 &&
-              `${stages.shaders.done} / ${stages.shaders.total}`,
-          ]
-        : ["Rendering", false];
+      : ["Rendering", false];
 
   return (
     <div

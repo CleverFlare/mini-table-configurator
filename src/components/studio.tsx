@@ -7,7 +7,6 @@ import {
   type ReactNode,
 } from "react";
 import { useThree } from "@react-three/fiber";
-import { Center } from "@react-three/drei";
 import {
   type DirectionalLight,
   DoubleSide,
@@ -78,30 +77,44 @@ function StudioEnvironment() {
   return null;
 }
 
-// Renders the shadow map once the model has mounted. The scene is static and
-// the shadow light points straight down, so orbiting and color changes never
-// change the shadow; recomputing it every frame would only cost GPU time.
-function RefreshShadow({ light }: { light: DirectionalLight | null }) {
+// Renders the shadow map once the model has mounted, and again whenever
+// `shadowKey` changes. The shadow light points straight down, so orbiting
+// never changes the shadow; recomputing it every frame would only cost GPU
+// time.
+function RefreshShadow({
+  light,
+  shadowKey,
+}: {
+  light: DirectionalLight | null;
+  shadowKey: unknown;
+}) {
   const invalidate = useThree((state) => state.invalidate);
 
   useLayoutEffect(() => {
     if (!light) return;
     light.shadow.needsUpdate = true;
     invalidate();
-  }, [light, invalidate]);
+  }, [light, shadowKey, invalidate]);
 
   return null;
 }
 
 // Studio built locally, so nothing is fetched from a CDN. The hemisphere
 // light and the softbox back fill and floor bounce lift shadowed areas so dark
-// colors keep their shape from every angle. Children are centered above a
-// floor that only shows their shadow; meshes need castShadow.
-export function Studio({ children }: { children: ReactNode }) {
+// finishes keep their shape from every angle. Children stand on a floor at
+// y = 0 that only shows their shadow; meshes need castShadow. Change
+// `shadowKey` whenever the children's shape changes, to recompute the shadow.
+export function Studio({
+  children,
+  shadowKey,
+}: {
+  children: ReactNode;
+  shadowKey?: unknown;
+}) {
   // drei's ContactShadows relies on ShaderMaterial, which WebGPURenderer
   // can't compile, so the floor is a transparent shadow catcher instead.
   const shadowCatcher = useMemo(
-    () => new ShadowNodeMaterial({ opacity: 0.5 }),
+    () => new ShadowNodeMaterial({ opacity: 0.35 }),
     [],
   );
   const [shadowLight, setShadowLight] = useState<DirectionalLight | null>(
@@ -120,16 +133,21 @@ export function Studio({ children }: { children: ReactNode }) {
         intensity={0}
         castShadow
         shadow-autoUpdate={false}
-        shadow-mapSize={[512, 512]}
-        shadow-radius={20}
+        // Covers the widest top with room for the blur, which is about 25 cm:
+        // soft, like the shade under a tabletop lit from far above.
+        shadow-mapSize={[256, 256]}
+        shadow-camera-left={-2}
+        shadow-camera-right={2}
+        shadow-camera-top={2}
+        shadow-camera-bottom={-2}
+        shadow-radius={16}
         shadow-blurSamples={25}
         shadow-bias={-0.001}
       />
       <StudioEnvironment />
       <Suspense fallback={null}>
-        <Center>{children}</Center>
+        {children}
         <mesh
-          position={[0, -1.15, 0]}
           rotation-x={-Math.PI / 2}
           receiveShadow
           material={shadowCatcher}
@@ -137,7 +155,7 @@ export function Studio({ children }: { children: ReactNode }) {
           <planeGeometry args={[10, 10]} />
         </mesh>
         {/* Inside the boundary, so it runs once the model is in. */}
-        <RefreshShadow light={shadowLight} />
+        <RefreshShadow light={shadowLight} shadowKey={shadowKey} />
       </Suspense>
     </>
   );
