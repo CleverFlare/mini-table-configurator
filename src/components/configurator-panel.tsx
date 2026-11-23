@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, type CSSProperties } from "react";
 import { RotateCcwIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -74,7 +74,8 @@ function DesktopPanel({ onReset, ...props }: PanelProps) {
 }
 
 // Always open and never dismissed, so the model stays interactive behind it.
-// The controls are short enough to show in full, so it has a single height.
+// It takes at most half the screen, so the model keeps the other half; below
+// the header, the controls scroll.
 function MobileSheet({
   onReset,
   onPeekChange,
@@ -105,9 +106,10 @@ function MobileSheet({
     >
       <DrawerContent
         ref={popupRef}
+        style={{ "--drawer-content-max-height": "50dvh" } as CSSProperties}
         className="shadow-[0_-8px_24px_-12px_rgb(0_0_0/0.15)]"
       >
-        <div className="flex items-center justify-between px-4 pt-3 pb-3">
+        <div className="flex shrink-0 items-center justify-between px-4 pt-3 pb-3">
           <DrawerTitle>Customize</DrawerTitle>
           <DrawerDescription className="sr-only">{DESCRIPTION}</DrawerDescription>
           <Button
@@ -120,7 +122,7 @@ function MobileSheet({
             Reset
           </Button>
         </div>
-        <div className="flex flex-col gap-4 px-4 pb-[max(env(safe-area-inset-bottom),1rem)]">
+        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain px-4 pb-[max(env(safe-area-inset-bottom),1rem)]">
           <PanelControls {...props} />
         </div>
       </DrawerContent>
