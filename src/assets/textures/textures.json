@@ -1,0 +1,5 @@
+{
+  "oak": { "color": "#a27f59", "roughness": 0.530354 },
+  "walnut": { "color": "#8a6a51", "roughness": 0.57626 },
+  "marble": { "color": "#ececec" }
+}

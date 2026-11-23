@@ -23,7 +23,12 @@ import { Studio } from "@/components/studio";
 import { ConfiguratorPanel } from "@/components/configurator-panel";
 import { InstallPrompt } from "@/components/install-prompt";
 import { LoadingOverlay } from "@/components/loading-overlay";
-import { tableModel } from "@/lib/table-assets";
+import {
+  TexturedFinishMaterial,
+  finishTextures,
+  setTableRenderer,
+  tableModel,
+} from "@/lib/table-assets";
 import { firstFrameRendered, shadersProgress } from "@/lib/load-stages";
 import {
   DEFAULT_CONFIGURATION,
@@ -52,6 +57,7 @@ function glassSlots({ finishes }: Configuration) {
 function Table({ configuration }: { configuration: Configuration }) {
   const { variants, finishes } = configuration;
   const scene = use(tableModel);
+  const textures = use(finishTextures);
   const invalidate = useThree((state) => state.invalidate);
 
   // The model's materials by name.
@@ -80,20 +86,25 @@ function Table({ configuration }: { configuration: Configuration }) {
     invalidate();
   }, [scene, variants, finishes, invalidate]);
 
-  // The renderer reads these values from the material every frame, so a
-  // finish change is a uniform update, never a shader recompile.
+  // The renderer reads these values from the material every frame, and a
+  // textured material swaps its maps' textures, so a finish change is a
+  // uniform update, never a shader recompile.
   useLayoutEffect(() => {
     for (const { slot, material, finishes: options } of SLOTS) {
       const target = materials.get(material);
       const finish = options.find(({ id }) => id === finishes[slot]);
       // Glass has its own material, set up with the model.
       if (!target || !finish || isGlass(finish)) continue;
+      if (target instanceof TexturedFinishMaterial) {
+        target.setFinish(finish, textures[finish.id]);
+        continue;
+      }
       target.color.set(finish.color);
       target.roughness = finish.roughness;
       target.metalness = finish.metalness;
     }
     invalidate();
-  }, [materials, finishes, invalidate]);
+  }, [materials, textures, finishes, invalidate]);
 
   return <primitive object={scene} />;
 }
@@ -216,6 +227,7 @@ function App() {
               props as ConstructorParameters<typeof WebGPURenderer>[0],
             );
             await renderer.init();
+            setTableRenderer(renderer);
             return renderer;
           }}
           // Set after creation, since R3F applies its own tone mapping default

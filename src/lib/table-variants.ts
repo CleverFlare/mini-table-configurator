@@ -16,9 +16,12 @@ export const SLOTS = [
     finishes: [
       { id: "oak", label: "Oak", color: "#c8a27a", roughness: 0.55, metalness: 0 },
       { id: "walnut", label: "Walnut", color: "#5a3a26", roughness: 0.45, metalness: 0 },
-      { id: "marble", label: "White marble", color: "#ededea", roughness: 0.2, metalness: 0 },
-      // Light passes through; see `isGlass`.
-      { id: "glass", label: "Glass", color: "#f4f8f7", roughness: 0.05, metalness: 0, transmission: 1 },
+      // Rendered darker than it looks, so the bright studio light doesn't wash
+      // its veins out to white; the swatch shows the color it reads as.
+      { id: "marble", label: "White marble", color: "#a8a8a4", swatch: "#ededea", roughness: 0.2, metalness: 0 },
+      // Light passes through; see `isGlass`. Its smoked tint is the glass
+      // material's, which the swatch shows.
+      { id: "glass", label: "Glass", color: "#f4f8f7", swatch: "#a9afad", roughness: 0.05, metalness: 0, transmission: 1 },
     ],
   },
   {

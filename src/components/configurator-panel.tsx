@@ -211,7 +211,7 @@ function FinishSwatch({ finish }: { finish: Finish }) {
       aria-hidden
       className="size-4 shrink-0 rounded-full shadow-[inset_0_0_0_1px_rgb(0_0_0/0.15)]"
       style={{
-        backgroundColor: finish.color,
+        backgroundColor: "swatch" in finish ? finish.swatch : finish.color,
         backgroundImage:
           finish.metalness > 0
             ? "linear-gradient(135deg, rgb(255 255 255 / 0.65), transparent 45%, rgb(0 0 0 / 0.25))"
