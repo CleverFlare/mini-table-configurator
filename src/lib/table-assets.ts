@@ -1,4 +1,3 @@
-import type { Mesh } from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import tableUrl from "@/assets/table_configurator.glb?url";
 import { loadAsset } from "@/lib/asset-loader";
@@ -12,9 +11,4 @@ import { loadAsset } from "@/lib/asset-loader";
 export const tableModel = loadAsset(tableUrl, "table_configurator.glb")
   .then((blob) => blob.arrayBuffer())
   .then((buffer) => new GLTFLoader().parseAsync(buffer, ""))
-  .then((gltf) => {
-    gltf.scene.traverse((object) => {
-      if ((object as Mesh).isMesh) object.castShadow = true;
-    });
-    return gltf.scene;
-  });
+  .then((gltf) => gltf.scene);

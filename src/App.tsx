@@ -35,8 +35,8 @@ function Table({ configuration }: { configuration: Configuration }) {
   const scene = use(tableModel);
   const invalidate = useThree((state) => state.invalidate);
 
-  // Before paint, so the first frame and the shader compile see the right
-  // variants.
+  // Before paint, so the first frame, the shader compile and the shadow bake
+  // see the right variants.
   useLayoutEffect(() => {
     scene.traverse((object) => {
       const { slot, variant } = object.userData as VariantTag;
@@ -151,8 +151,9 @@ function App() {
           // The scene only changes on orbit, swap or resize, so frames render
           // on demand rather than 60 times a second.
           frameloop="demand"
-          // Variance shadow maps, so the floor shadow can be blurred.
-          shadows="variance"
+          // No shadow maps: the floor's shadow is baked separately. An object
+          // keeps R3F from setting PCFSoftShadowMap, which WebGPU lacks.
+          shadows={{ enabled: false }}
           // WebGPU where available, otherwise its WebGL 2 backend; both run TSL.
           gl={async (props) => {
             const renderer = new WebGPURenderer(

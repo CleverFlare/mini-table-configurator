@@ -1,14 +1,6 @@
-import {
-  Suspense,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useState,
-  type ReactNode,
-} from "react";
+import { Suspense, useEffect, type ReactNode } from "react";
 import { useThree } from "@react-three/fiber";
 import {
-  type DirectionalLight,
   DoubleSide,
   Mesh,
   MeshBasicMaterial,
@@ -16,11 +8,8 @@ import {
   Scene,
   type Vector3Tuple,
 } from "three";
-import {
-  PMREMGenerator,
-  ShadowNodeMaterial,
-  type WebGPURenderer,
-} from "three/webgpu";
+import { PMREMGenerator, type WebGPURenderer } from "three/webgpu";
+import { ContactShadow } from "@/components/contact-shadow";
 
 // Softbox panels as [position, [width, height], intensity], each facing the
 // origin: a large overhead key, a softer front fill, rim lights for edge
@@ -77,33 +66,11 @@ function StudioEnvironment() {
   return null;
 }
 
-// Renders the shadow map once the model has mounted, and again whenever
-// `shadowKey` changes. The shadow light points straight down, so orbiting
-// never changes the shadow; recomputing it every frame would only cost GPU
-// time.
-function RefreshShadow({
-  light,
-  shadowKey,
-}: {
-  light: DirectionalLight | null;
-  shadowKey: unknown;
-}) {
-  const invalidate = useThree((state) => state.invalidate);
-
-  useLayoutEffect(() => {
-    if (!light) return;
-    light.shadow.needsUpdate = true;
-    invalidate();
-  }, [light, shadowKey, invalidate]);
-
-  return null;
-}
-
 // Studio built locally, so nothing is fetched from a CDN. The hemisphere
 // light and the softbox back fill and floor bounce lift shadowed areas so dark
 // finishes keep their shape from every angle. Children stand on a floor at
-// y = 0 that only shows their shadow; meshes need castShadow. Change
-// `shadowKey` whenever the children's shape changes, to recompute the shadow.
+// y = 0 that only shows their contact shadow. Change `shadowKey` whenever the
+// children's shape changes, to bake the shadow again.
 export function Studio({
   children,
   shadowKey,
@@ -111,51 +78,15 @@ export function Studio({
   children: ReactNode;
   shadowKey?: unknown;
 }) {
-  // drei's ContactShadows relies on ShaderMaterial, which WebGPURenderer
-  // can't compile, so the floor is a transparent shadow catcher instead.
-  const shadowCatcher = useMemo(
-    () => new ShadowNodeMaterial({ opacity: 0.35 }),
-    [],
-  );
-  const [shadowLight, setShadowLight] = useState<DirectionalLight | null>(
-    null,
-  );
-
   return (
     <>
       <hemisphereLight args={["#ffffff", "#d8d8d8", 0.6]} />
       <directionalLight position={[2, 5, 4]} intensity={1.5} />
-      {/* Shadow only: straight down and adding no light, so the floor gets a
-          soft contact shadow under the model. */}
-      <directionalLight
-        ref={setShadowLight}
-        position={[0, 5, 0]}
-        intensity={0}
-        castShadow
-        shadow-autoUpdate={false}
-        // Covers the widest top with room for the blur, which is about 25 cm:
-        // soft, like the shade under a tabletop lit from far above.
-        shadow-mapSize={[256, 256]}
-        shadow-camera-left={-2}
-        shadow-camera-right={2}
-        shadow-camera-top={2}
-        shadow-camera-bottom={-2}
-        shadow-radius={16}
-        shadow-blurSamples={25}
-        shadow-bias={-0.001}
-      />
       <StudioEnvironment />
       <Suspense fallback={null}>
         {children}
-        <mesh
-          rotation-x={-Math.PI / 2}
-          receiveShadow
-          material={shadowCatcher}
-        >
-          <planeGeometry args={[10, 10]} />
-        </mesh>
-        {/* Inside the boundary, so it runs once the model is in. */}
-        <RefreshShadow light={shadowLight} shadowKey={shadowKey} />
+        {/* Inside the boundary, so it bakes once the model is in. */}
+        <ContactShadow bakeKey={shadowKey} />
       </Suspense>
     </>
   );
